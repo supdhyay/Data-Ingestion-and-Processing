@@ -1,0 +1,372 @@
+/* Creating schema and inserting vlaues for yellow_tripdata_2017_11 */
+create external table IF NOT EXISTS yellow_tripdata_2017_11(
+VendorID int,
+tpep_pickup_datetime string,
+tpep_dropoff_datetime string,
+Passenger_count int,
+Trip_distance decimal,
+RateCodeID int,
+Store_and_fwd_flag string,
+PULocationID int,
+DOLocationID int,
+Payment_type int,
+Fare_amount decimal,
+Extra decimal,
+MTA_tax decimal,
+Tip_amount decimal,
+Tolls_amount decimal,
+Improvement_surcharge decimal,
+Total_amount decimal)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION 's3://data-science-2/yellow_tripdata_2017-11/'
+tblproperties ("skip.header.line.count"="2");
+
+
+/* Creating schema  and inserting vlaues for yellow_tripdata_2017_12 */
+create external table IF NOT EXISTS yellow_tripdata_2017_12(
+VendorID int,
+tpep_pickup_datetime string,
+tpep_dropoff_datetime string,
+Passenger_count int,
+Trip_distance decimal,
+RateCodeID int,
+Store_and_fwd_flag string,
+PULocationID int,
+DOLocationID int,
+Payment_type int,
+Fare_amount decimal,
+Extra decimal,
+MTA_tax decimal,
+Tip_amount decimal,
+Tolls_amount decimal,
+Improvement_surcharge decimal,
+Total_amount decimal)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION 's3://data-science-2/yellow_tripdata_2017-12/'
+tblproperties ("skip.header.line.count"="2");
+
+/*PARTITION THE DATA on year and month. Since we want to have all
+data in the same table and also to have better running time we are
+partitioning the table on year and month*/
+
+
+drop table yellow_tripdata_2017_partition_yrmnth;
+create external table if not exists yellow_tripdata_2017_partition_yrmnth
+(
+VendorID int,
+tpep_pickup_datetime string,
+tpep_dropoff_datetime string,
+Passenger_count int,
+Trip_distance decimal,
+RateCodeID int,
+Store_and_fwd_flag string,
+PULocationID int,
+DOLocationID int,
+Payment_type int,
+Fare_amount decimal,
+Extra decimal,
+MTA_tax decimal,
+Tip_amount decimal,
+Tolls_amount decimal,
+Improvement_surcharge decimal,
+Total_amount decimal) partitioned by (yr int, mnth int)
+location 's3://data-science-2/yellow_tripdata_2017_partitioned_YrMnth/';
+
+
+/*Inserting values in the table*/
+set hive.exec.dynamic.partition.mode=nonstrict;
+insert overwrite table yellow_tripdata_2017_partition_yrmnth partition(yr ,mnth )
+select  vendorid, tpep_pickup_datetime, tpep_dropoff_datetime, Passenger_count,
+Trip_distance, RateCodeID, Store_and_fwd_flag, PULocationID,DOLocationID, Payment_type,  
+Fare_amount,Extra, MTA_tax,Tip_amount,Tolls_amount,Improvement_surcharge,
+Total_amount,date_format(tpep_pickup_datetime,'yyyy') as yr, date_format(tpep_pickup_datetime,'MM') as mnth
+from yellow_tripdata_2017_11 UNION ALL  
+select  vendorid, tpep_pickup_datetime, tpep_dropoff_datetime, Passenger_count,
+Trip_distance, RateCodeID, Store_and_fwd_flag, PULocationID,DOLocationID, Payment_type,  
+Fare_amount,Extra, MTA_tax,Tip_amount,Tolls_amount,Improvement_surcharge,
+Total_amount,date_format(tpep_pickup_datetime,'yyyy') as yr, date_format(tpep_pickup_datetime,'MM') as mnth
+from yellow_tripdata_2017_12;
+
+/*Basic Data Quality Checks */
+
+
+/*1) Counting number of records per vendor in yellow_tripdata*/
+select count(*) as Count, vendorid
+from yellow_tripdata_2017_partition_yrmnth where yr = 2017 
+and (mnth=11 or mnth =12)
+group by vendorid;
+
+/*For Vendor 1 we have - 8447149 */
+/* For Vendor 2 we hav - 10345615 */
+
+
+/* 2)*/
+select count(date_format(tpep_pickup_datetime,'yyyy-MM')),vendorid  
+from yellow_tripdata_2017_partition_yrmnth
+where  date_format(tpep_pickup_datetime,'yyyy-MM') != '2017-12' and
+date_format(tpep_pickup_datetime,'yyyy-MM') != '2017-11'
+group by vendorid;
+
+
+/*The data is not consistent in yellow_tripdata file 
+we have data of other month as well. There are 315 rows like those and is provided by vendor 2*/
+
+/*3)Unusual or Erroneous rows in the dataset*/
+
+
+select count(*) as Faulty_Trip,vendorid  from yellow_tripdata_2017_partition_yrmnth
+where  pulocationid = dolocationid and trip_distance = 0 and  
+yr =2017 and (mnth =11 or mnth = 12)
+group by vendorid
+
+
+select count(*) as Faulty_Trip,vendorid  from yellow_tripdata_2017_partition_yrmnth
+where  fare_amount < 0 and  
+yr =2017 and (mnth =11 or mnth = 12)
+group by vendorid
+
+select count(*) as Faulty_Trip,vendorid  from yellow_tripdata_2017_partition_yrmnth
+where  Passenger_count <= 0 and  
+yr =2017 and (mnth =11 or mnth = 12)
+group by vendorid
+
+/*There are record where pick up and drop location are same also the distance covered are 0*/
+/*These data does not look good and these are provided by both the vendor */
+/*212634  for Vendor 1*/
+/* 241918  for Vendor 2*/
+/*Also there are records with negative fare this is given by vendor 2 */
+/*Number of such record are 9326*/
+/*Passenger count is also 0 for same record , such record are 108750 
+/*for vendor 1 and 220 for vendor 2
+
+
+
+
+/*Q1 : Compare the average fare for November and December.*/
+
+select avg(fare_amount) as Avg_Fare_Nov from 
+yellow_tripdata_2017_partition_yrmnth 
+where yr=2017 and mnth=11 
+and fare_amount > 0 and trip_distance > 0 
+and Passenger_count > 0 and pulocationid != dolocationid ;
+/*13.91*/
+select avg(fare_amount) as Avg_Fare_Dec 
+from yellow_tripdata_2017_partition_yrmnth 
+where yr=2017 and mnth=12 and fare_amount > 0 
+and trip_distance > 0 and Passenger_count > 0 
+and pulocationid != dolocationid ;
+/*13.78*/
+
+/*Q2 : how many trips are made by each level of Passenger_count */
+select count(*) as Number_Of_Passengers_Pertrip, Passenger_count from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) and fare_amount > 0  
+and trip_distance > 0 and Passenger_count > 0 
+and pulocationid != dolocationid 
+group by passenger_count order by passenger_count
+
+/*number_of_passengers_pertrip	passenger_count*/
+
+/*11898886	1	
+2553090	2	
+736957	3	
+363223	4	
+796240	5	
+483772	6	
+21	7	
+20	8	
+18	9	
+1	192	*/
+
+
+/*Yes most people travel solo - Around 11898886*/
+
+
+/*Q3 : the most preferred mode of payment?*/
+select  *
+from ( select count(*) as Count, Payment_type from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 
+and Passenger_count > 0 and pulocationid != dolocationid 
+group by Payment_type order by  Count  desc ) a  limit 1
+/* The most preferred type is 1= Credit card - 11532412*/
+
+
+/*Q4 : the average tip paid?*/
+
+
+select avg(Tip_amount) as Avg_TipPaid from yellow_tripdata_2017_partition_yrmnth where yr=2017
+ and (mnth=11 or mnth=12) and fare_amount > 0 
+ and trip_distance > 0 and Passenger_count > 0 
+ and pulocationid != dolocationid ; --1.95
+
+/*the average tip with the 25th, 50th and 75th percentiles */
+select percentile(cast(Tip_amount as bigint), 0.25) as 25th_Percentile from yellow_tripdata_2017_partition_yrmnth
+ where yr=2017 and (mnth=11 or mnth=12) and fare_amount > 0
+ and trip_distance > 0 and Passenger_count > 0
+ and pulocationid != dolocationid  -- 0
+
+
+ select percentile(cast(Tip_amount as bigint), 0.5) as 50th_Percentile from yellow_tripdata_2017_partition_yrmnth
+ where yr=2017 and (mnth=11 or mnth=12) and fare_amount > 0 
+ and trip_distance > 0 and Passenger_count > 0 
+ and pulocationid != dolocationid ; -- 2
+ 
+ select percentile(cast(Tip_amount as bigint), 0.75) as 75th_Percentile from yellow_tripdata_2017_partition_yrmnth
+ where yr=2017 and (mnth=11 or mnth=12) 
+ and fare_amount > 0 and trip_distance > 0 
+ and Passenger_count > 0 and pulocationid != dolocationid ; -- 3
+ 
+/*Yes since the average tip amount lie between the minimum and maximum tip amount so it is a good representation*/
+ 
+/*Q5 : the fraction of total trips where an extra charge is levied?*/
+set hive.mapred.mode=nonstrict;
+
+select
+     ( TotalBooking /Without_ExtraCharge_Booking) * 100 AS Fraction_of_Booking_Woithout_ExtraCharge
+  from
+    (select count(*) as Without_ExtraCharge_Booking from 
+    yellow_tripdata_2017_partition_yrmnth where 
+    yr=2017 and (mnth=11 or mnth=12) and fare_amount > 0 
+    and trip_distance > 0 and Passenger_count > 0 and pulocationid != dolocationid ) t1,
+    (select count(*) as TotalBooking from 
+    yellow_tripdata_2017_partition_yrmnth  where  yr=2017 
+    and (mnth=11 or mnth=12) and fare_amount > 0 and pulocationid != dolocationid 
+    and trip_distance > 0 and Extra=0 and Passenger_count > 0) t2
+/*Around 53% of the booking where an extra charge is levied*/
+
+
+/*Assignmnet 2*/
+/*Question 1*/
+select corr(TotalTipPerPassengerGroup , Passenger_count)
+from 
+(
+select sum(Tip_amount)  AS TotalTipPerPassengerGroup, Passenger_count 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and pulocationid != dolocationid  and Passenger_count>0 
+group by passenger_count order by passenger_count)a
+
+
+/*Answer -  Correlation between total tip per passenger group and passenger count  is -0.19 */
+
+set hive.mapred.mode=nonstrict;
+select TotalTipSolo , TotalTipOthers
+  from
+    (select sum(Tip_amount)  AS TotalTipSolo 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 
+and Passenger_count =1 and pulocationid != dolocationid ) t1,
+    (select sum(Tip_amount)  AS TotalTipOthers 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 
+and Passenger_count  > 1 and pulocationid != dolocationid ) t2
+
+/* Solo people give tip , they have given tip 23299771 while rest combination has given 9469811 */
+
+/*Question 2*/
+select cast((BUCKET1/TotalTrips)*100 As int)AS Bucket1Share , 
+cast((BUCKET2/TotalTrips)*100 As int)AS Bucket2Share,
+cast((BUCKET3/TotalTrips)*100 As int)AS Bucket3Share,
+cast((BUCKET4/TotalTrips)*100 As int)AS Bucket4Share,
+cast((BUCKET5/TotalTrips)*100 As int)AS Bucket5Share
+  from
+    (select count(*)  AS BUCKET1 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 
+and tip_amount >= 0 and tip_amount <5 and pulocationid != dolocationid  ) t1,
+    (select count(*)  AS BUCKET2 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 
+and tip_amount >= 5 and tip_amount <10 and pulocationid != dolocationid ) t2,
+ (select count(*)  AS BUCKET3 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 
+and tip_amount >= 10 and tip_amount <15 and pulocationid != dolocationid ) t3,
+ (select count(*)  AS BUCKET4 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 
+and tip_amount >= 15 and tip_amount <20 and pulocationid != dolocationid ) t4,
+ (select count(*)  AS BUCKET5 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 
+and tip_amount >= 20 and pulocationid != dolocationid ) t5,
+(select count(*)  AS TotalTrips 
+from yellow_tripdata_2017_partition_yrmnth
+where yr=2017 and (mnth=11 or mnth=12) and pulocationid != dolocationid 
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0 ) t6
+
+/*Answer Bucket1 Share - 90, Bucket2 Share - 7, Bucket3 share - 2, Bucket4 Share - 0, Bucket5 Share - 0*/
+
+/*Question 3*/
+select (avg(SpeedInNov) *3.6) as AverageSpeedNovKMPerHR from
+(
+select DistanceInMeter/TimeInSec as SpeedInNov
+from
+(SELECT (trip_distance * 1609.34) as DistanceInMeter,
+  (unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime)) as TimeInSec
+  FROM yellow_tripdata_2017_partition_yrmnth where yr=2017 and mnth=11
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0
+and pulocationid != dolocationid 
+)a
+)b
+
+select (avg(SpeedInNov) *3.6) as AverageSpeedDecKMPerHR from
+(
+select DistanceInMeter/TimeInSec as SpeedInNov
+from
+(SELECT (trip_distance * 1609.34) as DistanceInMeter,
+  (unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime)) as TimeInSec
+  FROM yellow_tripdata_2017_partition_yrmnth where yr=2017 and mnth=12
+and fare_amount > 0  and trip_distance > 0 and Passenger_count > 0
+and pulocationid != dolocationid 
+)a
+)b
+
+
+/* Average speed in November in km/hr 18.83 KM/Hr*/
+/* Average speed in December in km/hr 19.06. To covert miles to meter we multiply distance to 1609.34 and the multiply the answer by 3.6 to convert speed to km/hr*/
+
+/*Question 4*/
+
+select (avg(OverAllSpeed) *3.6) as AvgOverAllSpeed from
+(
+select DistanceInMeter/TimeInSec as OverAllSpeed
+from
+(SELECT (trip_distance * 1609.34) as DistanceInMeter,
+  (unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime)) as TimeInSec
+  FROM yellow_tripdata_2017_partition_yrmnth where yr=2017 and (mnth=11 or mnth=12)
+and fare_amount > 0  and trip_distance > 0 and pulocationid != dolocationid  and Passenger_count > 0
+)a
+)b
+
+select (avg(SpeedOn31Dec) *3.6) as AvgSpeedOn31Dec from
+(
+select DistanceInMeter/TimeInSec as SpeedOn31Dec
+from
+(SELECT (trip_distance * 1609.34) as DistanceInMeter,
+  (unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime)) as TimeInSec
+  FROM yellow_tripdata_2017_partition_yrmnth where yr=2017 and  mnth=12 and date_format(tpep_pickup_datetime,'dd') = 31
+and fare_amount > 0  and trip_distance > 0 and pulocationid != dolocationid  and Passenger_count > 0
+)a
+)b
+
+select (avg(SpeedOn25Dec) *3.6) as AvgSpeedOn25Dec from
+(
+select DistanceInMeter/TimeInSec as SpeedOn25Dec
+from
+(SELECT (trip_distance * 1609.34) as DistanceInMeter,
+  (unix_timestamp(tpep_dropoff_datetime) - unix_timestamp(tpep_pickup_datetime)) as TimeInSec
+  FROM yellow_tripdata_2017_partition_yrmnth where yr=2017 and  mnth=12 and 
+date_format(tpep_pickup_datetime,'dd') = 25
+and fare_amount > 0  and trip_distance > 0 and pulocationid != dolocationid  and Passenger_count > 0
+)a
+)b
+
+/*Overall speed is 19 km/hr and average speed on 31 dec 23.16 km/hr is while average speed on 25th dec is 25.74 km/hr*/
